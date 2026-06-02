@@ -1512,6 +1512,17 @@ async function pushDataToGithub(silent){
   state.github.lastSync=new Date().toISOString(); state.github.lastError=""; saveSession(); renderGithubStatus();
   return { ownerUrl:`${window.location.origin}${window.location.pathname}?d=${g.clientKey}`, sizeKB:(new Blob([json]).size/1024).toFixed(1) };
 }
+async function verifyGithubWriteAccess(g){
+  const probePath="data/.sync-probe.txt";
+  const repoPath=`${g.owner}/${g.repo}`;
+  let sha;
+  try { const cur=await githubApi("GET",`${repoPath}/contents/${probePath}`,null,g.token); sha=cur.sha; } catch(e){}
+  const putBody={ message:"sync write probe", content:utf8ToBase64(String(Date.now())) };
+  if(sha) putBody.sha=sha;
+  const saved=await githubApi("PUT",`${repoPath}/contents/${probePath}`,putBody,g.token);
+  const delSha=saved.content?.sha||saved.sha;
+  if(delSha) await githubApi("DELETE",`${repoPath}/contents/${probePath}`,{ message:"remove sync probe", sha:delSha },g.token);
+}
 async function testGithubConnection(){
   syncGithubFromDom();
   const g=gh();
@@ -1523,15 +1534,11 @@ async function testGithubConnection(){
   renderGithubStatus("測試中…","#8a8170");
   try {
     const r=await githubApi("GET",`${g.owner}/${g.repo}`,null,g.token);
-    const canPush=!!(r.permissions&&r.permissions.push);
-    if(!canPush){
-      renderGithubStatus("✗ 可讀 repo，但 Token 沒有寫入權限（Contents 需 Read and write）。請到 GitHub token 設定修改後重貼 Token。","#9c4444");
-      return;
-    }
     const filePath=`data/${g.clientKey}.json`;
     try { await githubApi("GET",`${g.owner}/${g.repo}/contents/${filePath}`,null,g.token); }
     catch(e){ if(!String(e.message||"").includes("404")) throw e; }
-    renderGithubStatus(`✓ 連線成功，具寫入權限（${r.full_name} → ${filePath}）`,"#16a34a");
+    await verifyGithubWriteAccess(g);
+    renderGithubStatus(`✓ 連線成功，已確認可寫入（${r.full_name} → ${filePath}）`,"#16a34a");
   }
   catch(e){ renderGithubStatus(`✗ ${e.message}`,"#9c4444"); }
 }
